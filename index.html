@@ -212,6 +212,16 @@
             font-size: 14px;
         }
         
+        .storage-info {
+            background: #fff3cd;
+            border: 1px solid #ffeaa7;
+            color: #856404;
+            padding: 10px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+            font-size: 14px;
+        }
+        
         @media (max-width: 600px) {
             .nav-buttons {
                 flex-direction: column;
@@ -233,7 +243,11 @@
     <div class="container">
         <div class="header">
             <h1>🛒 Grocery Shop POS</h1>
-            <p>Point of Sale System</p>
+            <p>Point of Sale System with Local Storage</p>
+        </div>
+        
+        <div class="storage-info" id="storageInfo">
+            ℹ️ Data is automatically saved to your browser's local storage
         </div>
         
         <div class="nav-buttons">
@@ -297,41 +311,85 @@
         </div>
     </div>
 
-    <script src="sql-wasm.js"></script>
     <script>
-        let database;
-        let SQLite;
+        let products = [];
         let currentInvoiceItems = [];
+        let nextProductId = 1;
+        
+        // Local Storage Keys
+        const STORAGE_KEYS = {
+            PRODUCTS: 'grocery_pos_products',
+            NEXT_ID: 'grocery_pos_next_id',
+            CURRENT_INVOICE: 'grocery_pos_current_invoice'
+        };
         
         // Initialize everything when page loads
         document.addEventListener('DOMContentLoaded', function() {
+            checkLocalStorageSupport();
             initializeApp();
         });
         
-        async function initializeApp() {
+        function checkLocalStorageSupport() {
             try {
-                await setupDatabase();
+                localStorage.setItem('test', 'test');
+                localStorage.removeItem('test');
+            } catch (e) {
+                document.getElementById('storageInfo').innerHTML = 
+                    '⚠️ LocalStorage not supported in this environment. Data will not persist between sessions.';
+                document.getElementById('storageInfo').style.background = '#f8d7da';
+                document.getElementById('storageInfo').style.color = '#721c24';
+                document.getElementById('storageInfo').style.borderColor = '#f5c6cb';
+            }
+        }
+        
+        function initializeApp() {
+            try {
+                loadDataFromStorage();
                 setupEventListeners();
                 loadAllProducts();
-                showMessage('System ready!', 'success');
+                loadCurrentInvoice();
+                showMessage('System ready! Data loaded from storage.', 'success');
             } catch (error) {
                 showMessage('Failed to initialize: ' + error.message, 'error');
             }
         }
         
-        async function setupDatabase() {
-            SQLite = await initSqlJs({
-                locateFile: file => file
-            });
-            
-            database = new SQLite.Database();
-            
-            // Create products table
-            database.run(`CREATE TABLE IF NOT EXISTS products (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL UNIQUE,
-                price_per_kg REAL NOT NULL
-            )`);
+        function loadDataFromStorage() {
+            try {
+                // Load products
+                const savedProducts = localStorage.getItem(STORAGE_KEYS.PRODUCTS);
+                if (savedProducts) {
+                    products = JSON.parse(savedProducts);
+                }
+                
+                // Load next ID
+                const savedNextId = localStorage.getItem(STORAGE_KEYS.NEXT_ID);
+                if (savedNextId) {
+                    nextProductId = parseInt(savedNextId);
+                }
+                
+                // Load current invoice
+                const savedInvoice = localStorage.getItem(STORAGE_KEYS.CURRENT_INVOICE);
+                if (savedInvoice) {
+                    currentInvoiceItems = JSON.parse(savedInvoice);
+                }
+            } catch (error) {
+                console.error('Error loading from storage:', error);
+                products = [];
+                currentInvoiceItems = [];
+                nextProductId = 1;
+            }
+        }
+        
+        function saveToStorage() {
+            try {
+                localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(products));
+                localStorage.setItem(STORAGE_KEYS.NEXT_ID, nextProductId.toString());
+                localStorage.setItem(STORAGE_KEYS.CURRENT_INVOICE, JSON.stringify(currentInvoiceItems));
+            } catch (error) {
+                console.error('Error saving to storage:', error);
+                showMessage('Warning: Could not save data to storage', 'error');
+            }
         }
         
         function setupEventListeners() {
@@ -385,8 +443,21 @@
                 return;
             }
             
+            // Check if product already exists
+            if (products.some(p => p.name.toLowerCase() === name.toLowerCase())) {
+                showMessage('Product with this name already exists', 'error');
+                return;
+            }
+            
             try {
-                database.run('INSERT INTO products (name, price_per_kg) VALUES (?, ?)', [name, price]);
+                const newProduct = {
+                    id: nextProductId++,
+                    name: name,
+                    price_per_kg: price
+                };
+                
+                products.push(newProduct);
+                saveToStorage();
                 
                 // Clear form
                 document.getElementById('newProductName').value = '';
@@ -400,32 +471,24 @@
         }
         
         function loadAllProducts() {
-            const query = database.prepare('SELECT * FROM products ORDER BY name');
-            const products = [];
-            
-            while (query.step()) {
-                products.push(query.getAsObject());
-            }
-            query.free();
-            
             displayProducts(products);
         }
         
-        function displayProducts(products) {
+        function displayProducts(productList) {
             const container = document.getElementById('productsDisplay');
             
-            if (products.length === 0) {
+            if (productList.length === 0) {
                 container.innerHTML = '<div class="product-item">No products available. Add some products first.</div>';
                 return;
             }
             
-            container.innerHTML = products.map(product => `
+            container.innerHTML = productList.map(product => `
                 <div class="product-item">
                     <div>
                         <strong>${product.name}</strong><br>
                         <span style="color: #666;">₹${product.price_per_kg.toFixed(2)} per kg</span>
                     </div>
-                    <button class="btn-danger btn-small" onclick="removeProduct(${product.id}, '${product.name}')">
+                    <button class="btn-danger btn-small" onclick="removeProduct(${product.id}, '${product.name.replace(/'/g, "\\'")}')">
                         🗑️ Delete
                     </button>
                 </div>
@@ -435,7 +498,8 @@
         function removeProduct(id, name) {
             if (confirm(`Delete "${name}"?`)) {
                 try {
-                    database.run('DELETE FROM products WHERE id = ?', [id]);
+                    products = products.filter(p => p.id !== id);
+                    saveToStorage();
                     loadAllProducts();
                     showMessage(`Product "${name}" deleted`, 'success');
                 } catch (error) {
@@ -445,14 +509,6 @@
         }
         
         function refreshProductDropdown() {
-            const query = database.prepare('SELECT * FROM products ORDER BY name');
-            const products = [];
-            
-            while (query.step()) {
-                products.push(query.getAsObject());
-            }
-            query.free();
-            
             const dropdown = document.getElementById('selectProduct');
             dropdown.innerHTML = '<option value="">-- Select a product --</option>';
             
@@ -493,6 +549,7 @@
             };
             
             currentInvoiceItems.push(invoiceItem);
+            saveToStorage();
             
             // Clear inputs
             productSelect.value = '';
@@ -500,6 +557,10 @@
             
             displayInvoiceItems();
             showMessage('Item added to invoice', 'success');
+        }
+        
+        function loadCurrentInvoice() {
+            displayInvoiceItems();
         }
         
         function displayInvoiceItems() {
@@ -538,12 +599,14 @@
             if (item) {
                 item.weight = weight;
                 item.total = item.pricePerKg * weight;
+                saveToStorage();
                 displayInvoiceItems();
             }
         }
         
         function removeInvoiceItem(itemId) {
             currentInvoiceItems = currentInvoiceItems.filter(item => item.id !== itemId);
+            saveToStorage();
             displayInvoiceItems();
         }
         
@@ -555,6 +618,7 @@
         function clearCurrentInvoice() {
             if (currentInvoiceItems.length > 0 && confirm('Clear all items from invoice?')) {
                 currentInvoiceItems = [];
+                saveToStorage();
                 displayInvoiceItems();
                 showMessage('Invoice cleared', 'success');
             }
@@ -613,8 +677,30 @@
             
             setTimeout(() => {
                 printWindow.print();
+                
+                // Clear invoice after printing if user wants
+                setTimeout(() => {
+                    if (confirm('Invoice printed! Would you like to clear the current invoice?')) {
+                        currentInvoiceItems = [];
+                        saveToStorage();
+                        displayInvoiceItems();
+                        showMessage('Invoice cleared', 'success');
+                    }
+                }, 1000);
             }, 500);
         }
+        
+        // Auto-save current invoice every 30 seconds
+        setInterval(() => {
+            if (currentInvoiceItems.length > 0) {
+                saveToStorage();
+            }
+        }, 30000);
+        
+        // Save data before page unload
+        window.addEventListener('beforeunload', function() {
+            saveToStorage();
+        });
     </script>
 </body>
 </html>
