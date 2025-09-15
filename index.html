@@ -661,7 +661,10 @@
             const dropdown = document.getElementById('selectProduct');
             dropdown.innerHTML = '<option value="">-- Select a product --</option>';
             
-            products.forEach(product => {
+            
+            // Sort products alphabetically by name before adding to dropdown
+            const sortedProducts = [...products].sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
+            sortedProducts.forEach(product => {
                 dropdown.innerHTML += `
                     <option value='${JSON.stringify(product)}'>
                         ${product.name} - ₹${product.price_per_kg.toFixed(2)}/kg
